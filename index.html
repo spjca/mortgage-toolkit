@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Mortgage Toolkit — Affordability & Amortization</title>
+  <link rel="stylesheet" href="vendor/jquery.dataTables.min.css">
+  <link rel="stylesheet" href="vendor/buttons.dataTables.min.css">
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <header>
+    <h1>Mortgage Toolkit</h1>
+    <div class="kpis" id="kpis">
+      <div class="kpi" id="kpi-price">Max Price — $0</div>
+      <div class="kpi" id="kpi-monthly">Initial Monthly — $0</div>
+      <div class="kpi" id="kpi-loan">Loan — $0</div>
+      <div class="kpi" id="kpi-cash">Cash to Close — $0</div>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn" id="btnSave">Save</button>
+      <button class="btn" id="btnLoad">Load</button>
+      <button class="btn" id="btnReset">Reset</button>
+      <button class="btn" id="btnShare">Share Link</button>
+    </div>
+  </header>
+
+  <div class="container">
+    <aside id="controls">
+      <fieldset>
+        <legend>Global</legend>
+        <label><input type="checkbox" id="afterTax"> After-tax view (CA)</label>
+        <div id="taxBlock" style="display:none">
+          <div class="row">
+            <div>
+              <label>Federal marginal %</label>
+              <input type="number" id="fedMarg" step="0.01" value="24">
+            </div>
+            <div>
+              <label>CA marginal %</label>
+              <input type="number" id="caMarg" step="0.01" value="9.3">
+            </div>
+          </div>
+          <div class="row">
+            <div>
+              <label>SALT cap ($)</label>
+              <input type="number" id="saltCap" step="100" value="10000">
+            </div>
+            <div>
+              <label>Standard deduction ($)</label>
+              <input type="number" id="stdDed" step="100" value="29200">
+            </div>
+          </div>
+          <label><input type="checkbox" id="autoItemize" checked> Auto choose itemize vs standard</label>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Affordability Inputs</legend>
+        <label>Max monthly budget ($)</label>
+        <input type="number" id="maxMonthly" value="1500" step="50">
+        <label>Down payment ($)</label>
+        <input type="number" id="down" value="20000" step="1000">
+
+        <div class="row">
+          <div>
+            <label>Term (years)</label>
+            <input type="number" id="term" value="30" min="1" step="1">
+          </div>
+          <div>
+            <label>Base rate (%)</label>
+            <input type="number" id="baseRate" value="6.5" step="0.01">
+          </div>
+        </div>
+
+        <div class="row">
+          <div>
+            <label>Rate min (%)</label>
+            <input type="number" id="rMin" value="2" step="0.1">
+          </div>
+          <div>
+            <label>Rate max (%)</label>
+            <input type="number" id="rMax" value="15" step="0.1">
+          </div>
+        </div>
+
+        <label>Property tax rate (%)</label>
+        <input type="number" id="taxRate" value="1.2" step="0.01">
+        <div class="row">
+          <div>
+            <label>Extra tax rate (Mello-Roos) %</label>
+            <input type="number" id="extraTaxRate" value="0" step="0.01">
+          </div>
+          <div>
+            <label>Fixed assessments ($/yr)</label>
+            <input type="number" id="fixedAssess" value="0" step="50">
+          </div>
+        </div>
+
+        <div class="row">
+          <div>
+            <label>Insurance ($/yr)</label>
+            <input type="number" id="insYear" value="1200" step="50">
+          </div>
+          <div>
+            <label>HOA ($/mo)</label>
+            <input type="number" id="hoa" value="150" step="10">
+          </div>
+        </div>
+
+        <div class="row">
+          <div>
+            <label>PMI %/yr (auto cancels ≤80% LTV)</label>
+            <input type="number" id="pmiPct" value="0.5" step="0.01">
+          </div>
+          <div>
+            <label>Points % (upfront)</label>
+            <input type="number" id="pointsPct" value="0" step="0.125">
+          </div>
+        </div>
+
+        <label>Rate buydown (bps)</label>
+        <input type="number" id="buydownBps" value="0" step="5">
+        <div class="help">Affordability uses initial-month PMI (if LTV ≥ 80%) and constrains total PITI + HOA + assessments + PMI ≤ budget.</div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Amortization Inputs</legend>
+        <label>
+          <select id="priceOrLoan">
+            <option value="price">Enter Purchase Price</option>
+            <option value="loan">Enter Loan Amount</option>
+          </select>
+        </label>
+        <div id="priceLoanBlock">
+          <label>Purchase price ($)</label>
+          <input type="number" id="price" value="220000" step="1000">
+          <label>Down payment ($)</label>
+          <input type="number" id="down2" value="20000" step="1000">
+        </div>
+        <div class="row">
+          <div>
+            <label>Rate (%)</label>
+            <input type="number" id="rate" value="6.5" step="0.01">
+          </div>
+          <div>
+            <label>Term (years)</label>
+            <input type="number" id="term2" value="30" step="1">
+          </div>
+        </div>
+        <label>Payment cadence</label>
+        <select id="cadence">
+          <option value="monthly">Monthly</option>
+          <option value="biweekly">Bi-weekly (26× half-payments)</option>
+        </select>
+
+        <fieldset>
+          <legend>Taxes / Insurance / HOA (amortization)</legend>
+          <div class="row">
+            <div>
+              <label>Property tax rate (%)</label>
+              <input type="number" id="taxRate2" value="1.2" step="0.01">
+            </div>
+            <div>
+              <label>Extra tax rate %</label>
+              <input type="number" id="extraTaxRate2" value="0" step="0.01">
+            </div>
+          </div>
+          <div class="row">
+            <div>
+              <label>Fixed assessments ($/yr)</label>
+              <input type="number" id="fixedAssess2" value="0" step="50">
+            </div>
+            <div>
+              <label>Insurance ($/yr)</label>
+              <input type="number" id="insYear2" value="1200" step="50">
+            </div>
+          </div>
+          <div class="row">
+            <div>
+              <label>HOA ($/mo)</label>
+              <input type="number" id="hoa2" value="150" step="10">
+            </div>
+            <div>
+              <label>PMI %/yr</label>
+              <input type="number" id="pmiPct2" value="0.5" step="0.01">
+            </div>
+          </div>
+          <div class="row">
+            <div>
+              <label>Tax step-up %/yr</label>
+              <input type="number" id="taxStep" value="2" step="0.1">
+            </div>
+            <div>
+              <label>HOA step-up %/yr</label>
+              <input type="number" id="hoaStep" value="3" step="0.1">
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Extra principal</legend>
+          <div class="row">
+            <div>
+              <label>Monthly extra ($)</label>
+              <input type="number" id="xtraMonthly" value="0" step="25">
+            </div>
+            <div>
+              <label>Annual extra ($)</label>
+              <input type="number" id="xtraAnnual" value="0" step="100">
+            </div>
+          </div>
+          <div class="row">
+            <div>
+              <label>Annual extra month (1-12)</label>
+              <input type="number" id="xtraAnnualMonth" value="1" min="1" max="12">
+            </div>
+            <div>
+              <label>One-time extra ($)</label>
+              <input type="number" id="xtraOnce" value="0" step="100">
+            </div>
+          </div>
+          <label>One-time extra month (1-N)</label>
+          <input type="number" id="xtraOnceMonth" value="1" min="1" step="1">
+        </fieldset>
+      </fieldset>
+    </aside>
+
+    <main>
+      <!-- No tabbar; stacked sections -->
+      <section id="affSection">
+        <div class="grid2">
+          <div class="card"><div id="affPrice"></div></div>
+          <div class="card"><div id="affPayments"></div></div>
+        </div>
+      </section>
+
+      <h2 style="margin:10px 0 6px 0;font-size:16px;color:#cfe0ff;">Amortization</h2>
+      <section id="amortSection">
+        <div class="grid2">
+          <div class="card">
+            <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+              <label><input type="checkbox" id="absDollars"> Absolute $ (otherwise % stacked)</label>
+            </div>
+            <div id="amortStack"></div>
+          </div>
+          <div class="card"><div id="balanceLine"></div></div>
+        </div>
+
+        <div class="table-wrap" style="margin-top:12px">
+          <table id="amortTable" class="display" style="width:100%">
+            <thead>
+              <tr>
+                <th>Month</th><th>Year</th><th>Payment</th><th>Principal</th><th>Interest</th><th>PMI</th>
+                <th>Taxes</th><th>Insurance</th><th>HOA</th><th>Assess</th><th>Extra</th><th>End Balance</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <footer>
+    <p><em>Disclosure:</em> This application is informational only and not financial advice. Calculations are approximations; consult professionals before decisions. California after-tax view uses simplified assumptions (SALT cap and first-year deductions). © <a href="https://www.seanpj.com" target="_blank" rel="noopener">seanpj.com</a></p>
+  </footer>
+
+  <!-- Vendor libs (order matters) -->
+  <script src="vendor/plotly.min.js"></script>
+  <script src="vendor/jquery-3.7.1.min.js"></script>
+  <script src="vendor/jquery.dataTables.min.js"></script>
+  <script src="vendor/dataTables.buttons.min.js"></script>
+  <script src="vendor/jszip.min.js"></script>
+  <script src="vendor/pdfmake.min.js"></script>
+  <script src="vendor/vfs_fonts.js"></script>
+  <script src="vendor/buttons.html5.min.js"></script>
+  <script src="vendor/buttons.print.min.js"></script>
+  <script src="vendor/html2canvas.min.js"></script>
+
+  <script src="src/app.js"></script>
+</body>
+</html>
