@@ -1,437 +1,585 @@
-/* Mortgage Toolkit — client-only, static
- * Tabs: Affordability & Amortization
- * Charts: Plotly; Table: DataTables (+Buttons)
- * Dark UI, localStorage persistence, share link.
- */
-
 const $ = (sel) => document.querySelector(sel);
-const fmt = (n) => n.toLocaleString(undefined, {maximumFractionDigits: 2});
-const money = (n) => '$' + (Math.round(n*100)/100).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
+const money = (n) => '$' + (Math.round(n * 100) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-function pmnt(P, rAnnualPct, years){
-  const r = rAnnualPct/100/12;
-  const N = years*12;
-  if (r === 0) return P / N;
-  return P * r / (1 - Math.pow(1+r, -N));
+let libsReadyPromise;
+let dataTable;
+const APP_BASE = (() => {
+  const appScript = [...document.querySelectorAll('script[src]')].find((el) => el.src.includes('/src/app.js') || el.getAttribute('src') === 'src/app.js');
+  return new URL('.', appScript ? appScript.src : window.location.href).href;
+})();
+
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = new URL(src, APP_BASE).href;
+    s.async = false;
+    s.onload = resolve;
+    s.onerror = () => reject(new Error(`Failed to load ${src}`));
+    document.head.appendChild(s);
+  });
 }
 
-// First-year tax savings (very simplified; CA + Federal; SALT cap applies to property tax only).
-function firstYearTaxSavings({price, ratePct, loan, propTaxAnnual, fedPct, caPct, saltCap, stdDed}){
-  const r = ratePct/100/12;
-  const months = 12;
-  let bal = loan, totalInterest = 0;
-  for (let m=1;m<=months;m++){
-    const interest = bal * r;
-    const pmt = pmnt(loan, ratePct, loan>0?30:30); // nominal—only interest needed; not exact to entered term but close for yr1
-    const principal = Math.min(pmt - interest, bal);
-    bal -= principal;
-    totalInterest += interest;
-  }
-  const deductiblePT = Math.min(saltCap, propTaxAnnual);
-  const itemized = deductiblePT + totalInterest;
-  const effectiveDeduction = Math.max(0, itemized - stdDed);
-  const taxRate = (fedPct + caPct)/100;
-  return effectiveDeduction * taxRate;
+function ensureVendorLibs() {
+  if (window.Plotly && window.jQuery && window.jQuery.fn?.DataTable) return Promise.resolve();
+  if (libsReadyPromise) return libsReadyPromise;
+
+  libsReadyPromise = (async () => {
+    const scripts = [
+      'vendor/plotly.min.js',
+      'vendor/jquery-3.7.1.min.js',
+      'vendor/jquery.dataTables.min.js',
+      'vendor/dataTables.buttons.min.js',
+      'vendor/jszip.min.js',
+      'vendor/pdfmake.min.js',
+      'vendor/vfs_fonts.js',
+      'vendor/buttons.html5.min.js',
+      'vendor/buttons.print.min.js'
+    ];
+    for (const src of scripts) await loadScript(src);
+  })();
+
+  return libsReadyPromise;
 }
 
-// State persistence helpers
-function saveState(){
+function firstInputIdInLabel(label) {
+  const contained = label.querySelector('input,select,textarea');
+  if (contained?.id) return null;
+  const probe = label.nextElementSibling;
+  if (!probe) return null;
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(probe.tagName) && probe.id) return probe.id;
+  return null;
+}
+
+function enhanceAccessibility() {
+  document.querySelectorAll('label').forEach((label) => {
+    if (!label.htmlFor) {
+      const targetId = firstInputIdInLabel(label);
+      if (targetId) label.htmlFor = targetId;
+    }
+  });
+}
+
+
+function syncLinkedInputs() {
+  const linked = $('#linkInputs')?.checked;
+  const mappings = [
+    ['baseRate', 'rate', (v) => Math.max(0, v - ((+$('#buydownBps').value || 0) / 100))],
+    ['term', 'term2'],
+    ['taxRate', 'taxRate2'],
+    ['extraTaxRate', 'extraTaxRate2'],
+    ['fixedAssess', 'fixedAssess2'],
+    ['insYear', 'insYear2'],
+    ['hoa', 'hoa2'],
+    ['pmiPct', 'pmiPct2'],
+    ['down', 'down2']
+  ];
+
+  mappings.forEach(([src, target, transform]) => {
+    const srcEl = document.getElementById(src);
+    const tgtEl = document.getElementById(target);
+    if (!srcEl || !tgtEl) return;
+    if (linked) {
+      const raw = Number(srcEl.value || 0);
+      const value = transform ? transform(raw) : raw;
+      tgtEl.value = Number.isFinite(value) ? value : 0;
+      tgtEl.setAttribute('readonly', 'readonly');
+      tgtEl.setAttribute('aria-readonly', 'true');
+    } else {
+      tgtEl.removeAttribute('readonly');
+      tgtEl.removeAttribute('aria-readonly');
+    }
+  });
+}
+
+function saveState() {
   const ids = [
-    'afterTax','fedMarg','caMarg','saltCap','stdDed','autoItemize','maxMonthly','down','term','baseRate','rMin','rMax','taxRate','extraTaxRate','fixedAssess','insYear','hoa','pmiPct','pointsPct','buydownBps','priceOrLoan','price','down2','rate','term2','cadence','taxRate2','extraTaxRate2','fixedAssess2','insYear2','hoa2','pmiPct2','taxStep','hoaStep','xtraMonthly','xtraAnnual','xtraAnnualMonth','xtraOnce','xtraOnceMonth','absDollars'
+    'afterTax', 'linkInputs', 'fedMarg', 'caMarg', 'saltCap', 'stdDed', 'autoItemize', 'monthlyIncome', 'liquidCash', 'maxMonthly', 'down', 'term', 'baseRate', 'rMin', 'rMax',
+    'taxRate', 'extraTaxRate', 'fixedAssess', 'insYear', 'hoa', 'pmiPct', 'pointsPct', 'buydownBps',
+    'priceOrLoan', 'price', 'loanAmt', 'down2', 'rate', 'term2', 'cadence', 'taxRate2', 'extraTaxRate2', 'fixedAssess2', 'insYear2',
+    'hoa2', 'pmiPct2', 'taxStep', 'hoaStep', 'xtraMonthly', 'xtraAnnual', 'xtraAnnualMonth', 'xtraOnce', 'xtraOnceMonth', 'absDollars'
   ];
   const obj = {};
-  ids.forEach(id=>{
+  ids.forEach((id) => {
     const el = document.getElementById(id);
     if (!el) return;
-    obj[id] = (el.type==='checkbox') ? el.checked : Number(el.value);
-    if (el.type==='select-one') obj[id] = el.value;
+    obj[id] = (el.type === 'checkbox') ? el.checked : Number(el.value);
+    if (el.type === 'select-one') obj[id] = el.value;
   });
   localStorage.setItem('mortgageToolkit', JSON.stringify(obj));
 }
 
-function loadState(){
+function loadState() {
   const raw = localStorage.getItem('mortgageToolkit');
   if (!raw) return false;
-  try{
+  try {
     const obj = JSON.parse(raw);
-    Object.entries(obj).forEach(([k,v])=>{
+    Object.entries(obj).forEach(([k, v]) => {
       const el = document.getElementById(k);
       if (!el) return;
-      if (el.type==='checkbox') el.checked = !!v;
-      else if (el.type==='select-one') el.value = v;
+      if (el.type === 'checkbox') el.checked = !!v;
       else el.value = v;
     });
     return true;
-  }catch(e){ return false; }
+  } catch (_) {
+    return false;
+  }
 }
 
-function shareLink(){
+function shareLink() {
   const raw = localStorage.getItem('mortgageToolkit') || '{}';
   const encoded = btoa(unescape(encodeURIComponent(raw)));
   const url = location.origin + location.pathname + '#s=' + encoded;
   navigator.clipboard.writeText(url);
   alert('Share link copied to clipboard.');
 }
-function tryLoadFromHash(){
+
+function tryLoadFromHash() {
   if (!location.hash.startsWith('#s=')) return false;
-  try{
+  try {
     const decoded = decodeURIComponent(escape(atob(location.hash.slice(3))));
     localStorage.setItem('mortgageToolkit', decoded);
     return true;
-  }catch(e){ return false; }
-}
-
-// UI wiring
-function showTaxBlock(){ $('#taxBlock').style.display = $('#afterTax').checked ? 'block' : 'none'; }
-function switchTab(which){ /* single-page mode: no tab toggle */ return; }
-function togglePriceLoan(){
-  const mode = $('#priceOrLoan').value;
-  if (mode==='price'){
-    $('#priceLoanBlock').innerHTML = `
-      <label>Purchase price ($)</label>
-      <input type="number" id="price" value="${$('#price')?$('#price').value:220000}" step="1000">
-      <label>Down payment ($)</label>
-      <input type="number" id="down2" value="${$('#down2')?$('#down2').value:20000}" step="1000">
-    `;
-  }else{
-    $('#priceLoanBlock').innerHTML = `
-      <label>Loan amount ($)</label>
-      <input type="number" id="loanAmt" value="${$('#loanAmt')?$('#loanAmt').value:200000}" step="1000">
-    `;
+  } catch (_) {
+    return false;
   }
 }
 
-// ------- Affordability computations -------
-function affordabilityRun(){
-  const budget = +$('#maxMonthly').value||0;
-  const down = +$('#down').value||0;
-  const term = +$('#term').value||30;
-  const rMin = +$('#rMin').value||2;
-  const rMax = +$('#rMax').value||15;
-  const baseRate = +$('#baseRate').value||6.5;
-  const rateAdj = (+$('#buydownBps').value||0)/100; // bps to %
-  const taxRate = (+$('#taxRate').value||0) + (+$('#extraTaxRate').value||0);
-  const fixedAssess = +$('#fixedAssess').value||0;
-  const insMo = (+$('#insYear').value||0)/12;
-  const hoa = +$('#hoa').value||0;
-  const pmiPct = +$('#pmiPct').value||0;
-  const pointsPct = +$('#pointsPct').value||0;
+function showTaxBlock() {
+  $('#taxBlock').style.display = $('#afterTax').checked ? 'block' : 'none';
+}
+
+function togglePriceLoan() {
+  const mode = $('#priceOrLoan').value;
+  if (mode === 'price') {
+    $('#priceLoanBlock').innerHTML = `
+      <label for="price">Purchase price ($)</label>
+      <input type="number" id="price" value="${$('#price') ? $('#price').value : 220000}" step="1000">
+      <label for="down2">Down payment ($)</label>
+      <input type="number" id="down2" value="${$('#down2') ? $('#down2').value : 20000}" step="1000">
+    `;
+  } else {
+    $('#priceLoanBlock').innerHTML = `
+      <label for="loanAmt">Loan amount ($)</label>
+      <input type="number" id="loanAmt" value="${$('#loanAmt') ? $('#loanAmt').value : 200000}" step="1000">
+    `;
+  }
+  enhanceAccessibility();
+}
+
+
+function collectValidationInput() {
+  const mode = $('#priceOrLoan').value;
+  const base = {
+    monthlyIncome: +($('#monthlyIncome')?.value || 0),
+    liquidCash: +($('#liquidCash')?.value || 0),
+    maxMonthly: +$('#maxMonthly').value,
+    down: +$('#down').value,
+    term: +$('#term').value,
+    baseRate: +$('#baseRate').value,
+    rMin: +$('#rMin').value,
+    rMax: +$('#rMax').value,
+    taxRate: +$('#taxRate').value,
+    rate: +$('#rate').value,
+    term2: +$('#term2').value
+  };
+
+  if (mode === 'price') {
+    return {
+      ...base,
+      price: +($('#price')?.value || 0),
+      down2: +($('#down2')?.value || 0)
+    };
+  }
+
+  return {
+    ...base,
+    loan: +($('#loanAmt')?.value || 0)
+  };
+}
+
+function renderValidationErrors(errors) {
+  const box = $('#validationErrors');
+  if (!box) return;
+  if (!errors.length) {
+    box.style.display = 'none';
+    box.innerHTML = '';
+    return;
+  }
+  box.style.display = 'block';
+  box.innerHTML = `<strong>Please fix the following input issues:</strong><ul>${errors.map((e) => `<li>${e}</li>`).join('')}</ul>`;
+}
+
+function validateInputs() {
+  const errors = MortgageMath.validateScenarioInputs(collectValidationInput());
+  renderValidationErrors(errors);
+  return errors.length === 0;
+}
+
+function affordabilityRun() {
+  const budget = +$('#maxMonthly').value || 0;
+  const down = +$('#down').value || 0;
+  const term = +$('#term').value || 30;
+  const rMin = +$('#rMin').value || 2;
+  const rMax = +$('#rMax').value || 15;
+  const baseRate = +$('#baseRate').value || 6.5;
+  const rateAdj = (+$('#buydownBps').value || 0) / 100;
+  const taxRate = (+$('#taxRate').value || 0) + (+$('#extraTaxRate').value || 0);
+  const fixedAssess = +$('#fixedAssess').value || 0;
+  const insMo = (+$('#insYear').value || 0) / 12;
+  const hoa = +$('#hoa').value || 0;
+  const pmiPct = +$('#pmiPct').value || 0;
+  const pointsPct = +$('#pointsPct').value || 0;
 
   const rates = [];
-  for (let r=rMin; r<=rMax+1e-9; r=Number((r+0.1).toFixed(10))) rates.push(r);
+  for (let r = rMin; r <= rMax + 1e-9; r = Number((r + 0.1).toFixed(10))) rates.push(r);
 
   const seriesPrice = [];
-  const comp = {pi:[], tax:[], ins:[], hoa:[], assess:[], pmi:[]};
+  const comp = { pi: [], tax: [], ins: [], hoa: [], assess: [], pmi: [] };
 
-  // Root-solve price at each rate so that total monthly <= budget
-  rates.forEach((r0)=>{
-    const r = Math.max(0, r0 - rateAdj);
-    // price -> components
-    function monthlyFor(price){
-      const loan = Math.max(0, price - down);
-      const piti = pmnt(loan, r, term);
-      const tax = price * (taxRate/100) / 12;
-      const assess = fixedAssess/12;
-      const pmi = (loan>0 && price>0 && loan/price>=0.80) ? (pmiPct/100)*loan/12 : 0;
-      return {pi:piti, tax, ins:insMo, hoa, assess, pmi, total:piti+tax+insMo+hoa+assess+pmi};
-    }
-    // binary search price
-    let lo=0, hi=2_000_000;
-    for (let i=0;i<40;i++){
-      const mid=(lo+hi)/2;
-      const m = monthlyFor(mid).total;
-      if (m>budget) hi=mid; else lo=mid;
-    }
-    const price = Math.max(0, lo);
-    const m = monthlyFor(price);
+  rates.forEach((r0) => {
+    const rate = Math.max(0, r0 - rateAdj);
+    const price = MortgageMath.solveAffordablePrice({ budget, down, term, rate, taxRate, fixedAssess, insMo, hoa, pmiPct });
+    const m = MortgageMath.affordabilityAtRate({ price, down, term, rate, taxRate, fixedAssess, insMo, hoa, pmiPct });
     seriesPrice.push(price);
     comp.pi.push(m.pi); comp.tax.push(m.tax); comp.ins.push(m.ins); comp.hoa.push(m.hoa); comp.assess.push(m.assess); comp.pmi.push(m.pmi);
   });
 
-  // Plot A: price vs rate
-  Plotly.newPlot('affPrice', [{
-    x:rates, y:seriesPrice, mode:'lines+markers', name:'Affordable Price', line:{shape:'spline'}
-  }], {
-    title:'Affordability Curve', paper_bgcolor:'rgba(0,0,0,0)', plot_bgcolor:'rgba(0,0,0,0)',
-    xaxis:{title:'Mortgage Interest Rate (%)', gridcolor:'#283044', zeroline:false},
-    yaxis:{title:'Affordable Home Price ($)', gridcolor:'#283044'},
-    hovermode:'x unified', legend:{orientation:'h', x:0, y:1.2}
-  }, {displaylogo:false, responsive:true});
+  Plotly.newPlot('affPrice', [{ x: rates, y: seriesPrice, mode: 'lines+markers', name: 'Affordable Price', line: { shape: 'spline' } }], {
+    title: 'Affordability Curve', paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+    xaxis: { title: 'Mortgage Interest Rate (%)', gridcolor: '#283044', zeroline: false },
+    yaxis: { title: 'Affordable Home Price ($)', gridcolor: '#283044' },
+    hovermode: 'x unified', legend: { orientation: 'h', x: 0, y: 1.2 }
+  }, { displaylogo: false, responsive: true });
 
-  // Plot B: components vs rate (lines)
-  const traces = [
-    {name:'Mortgage P&I', x:rates, y:comp.pi, mode:'lines+markers'},
-    {name:'Property Tax', x:rates, y:comp.tax, mode:'lines+markers'},
-    {name:'Insurance', x:rates, y:comp.ins, mode:'lines+markers'},
-    {name:'HOA', x:rates, y:comp.hoa, mode:'lines+markers'},
-    {name:'Assessments', x:rates, y:comp.assess, mode:'lines+markers'},
-    {name:'PMI', x:rates, y:comp.pmi, mode:'lines+markers'}
-  ];
-  Plotly.newPlot('affPayments', traces, {
-    title:'Total Monthly Payment vs. Mortgage Rate',
-    paper_bgcolor:'rgba(0,0,0,0)', plot_bgcolor:'rgba(0,0,0,0)',
-    xaxis:{title:'Mortgage Interest Rate (%)', gridcolor:'#283044'},
-    yaxis:{title:'Monthly Payment ($)', gridcolor:'#283044'},
-    hovermode:'x unified', legend:{orientation:'h', x:0, y:1.2}
-  }, {displaylogo:false, responsive:true});
+  Plotly.newPlot('affPayments', [
+    { name: 'Mortgage P&I', x: rates, y: comp.pi, mode: 'lines+markers' },
+    { name: 'Property Tax', x: rates, y: comp.tax, mode: 'lines+markers' },
+    { name: 'Insurance', x: rates, y: comp.ins, mode: 'lines+markers' },
+    { name: 'HOA', x: rates, y: comp.hoa, mode: 'lines+markers' },
+    { name: 'Assessments', x: rates, y: comp.assess, mode: 'lines+markers' },
+    { name: 'PMI', x: rates, y: comp.pmi, mode: 'lines+markers' }
+  ], {
+    title: 'Total Monthly Payment vs. Mortgage Rate',
+    paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+    xaxis: { title: 'Mortgage Interest Rate (%)', gridcolor: '#283044' },
+    yaxis: { title: 'Monthly Payment ($)', gridcolor: '#283044' },
+    hovermode: 'x unified', legend: { orientation: 'h', x: 0, y: 1.2 }
+  }, { displaylogo: false, responsive: true });
 
-  // KPIs at base rate
-  const idx = rates.findIndex(v=>Math.abs(v-baseRate)<1e-9) >= 0 ? rates.findIndex(v=>Math.abs(v-baseRate)<1e-9) : rates.reduce((best,i,ii)=>Math.abs(i-baseRate)<Math.abs(rates[best]-baseRate)?ii:best,0);
-  const priceAtBase = seriesPrice[idx]||0;
+  const idx = rates.findIndex((v) => Math.abs(v - baseRate) < 1e-9);
+  const nearestIdx = idx >= 0 ? idx : rates.reduce((best, rate, i) => (Math.abs(rate - baseRate) < Math.abs(rates[best] - baseRate) ? i : best), 0);
+
+  const priceAtBase = seriesPrice[nearestIdx] || 0;
   const loanAtBase = Math.max(0, priceAtBase - down);
-  const piAtBase = comp.pi[idx]||0, taxAtBase = comp.tax[idx]||0, insAtBase = comp.ins[idx]||0, hoaAtBase = comp.hoa[idx]||0, aAtBase = comp.assess[idx]||0, pmiAtBase = comp.pmi[idx]||0;
-  const totalAtBase = piAtBase+taxAtBase+insAtBase+hoaAtBase+aAtBase+pmiAtBase;
-  const cashToClose = down + (pointsPct/100)*loanAtBase;
+  const totalAtBase = (comp.pi[nearestIdx] || 0) + (comp.tax[nearestIdx] || 0) + (comp.ins[nearestIdx] || 0) + (comp.hoa[nearestIdx] || 0) + (comp.assess[nearestIdx] || 0) + (comp.pmi[nearestIdx] || 0);
+  const cashToClose = down + (pointsPct / 100) * loanAtBase;
 
-  // after-tax view (first-year)
-  if ($('#afterTax').checked){
-    const fy = firstYearTaxSavings({
-      price: priceAtBase,
-      ratePct: Math.max(0, baseRate - (+$('#buydownBps').value||0)/100),
+  if ($('#afterTax').checked) {
+    const fy = MortgageMath.firstYearTaxSavings({
+      ratePct: Math.max(0, baseRate - (+$('#buydownBps').value || 0) / 100),
       loan: loanAtBase,
-      propTaxAnnual: priceAtBase*((taxRate)/100) + (+$('#fixedAssess').value||0),
-      fedPct: +$('#fedMarg').value||24,
-      caPct: +$('#caMarg').value||9.3,
-      saltCap: +$('#saltCap').value||10000,
-      stdDed: +$('#stdDed').value||29200
+      termYears: term,
+      propTaxAnnual: priceAtBase * (taxRate / 100) + (+$('#fixedAssess').value || 0),
+      fedPct: +$('#fedMarg').value || 24,
+      caPct: +$('#caMarg').value || 9.3,
+      saltCap: +$('#saltCap').value || 10000,
+      stdDed: +$('#stdDed').value || 29200
     });
-    const auto = $('#autoItemize').checked;
-    const monthlyBenefit = (fy/12);
+    const monthlyBenefit = fy / 12;
     const afterTaxMonthly = Math.max(0, totalAtBase - monthlyBenefit);
     $('#kpi-monthly').textContent = `Initial Monthly — ${money(totalAtBase)} (after-tax est. ${money(afterTaxMonthly)})`;
-  }else{
+  } else {
     $('#kpi-monthly').textContent = `Initial Monthly — ${money(totalAtBase)}`;
   }
 
   $('#kpi-price').textContent = `Max Price — ${money(priceAtBase)}`;
   $('#kpi-loan').textContent = `Loan — ${money(loanAtBase)}`;
   $('#kpi-cash').textContent = `Cash to Close — ${money(cashToClose)}`;
+
+  return {
+    budget,
+    down,
+    term,
+    baseRate,
+    taxRate,
+    fixedAssess,
+    insMo,
+    hoa,
+    pmiPct,
+    pointsPct,
+    rates,
+    seriesPrice,
+    priceAtBase,
+    loanAtBase,
+    totalAtBase,
+    cashToClose
+  };
 }
 
-// ------- Amortization schedule -------
-function amortizationRun(){
-  // Inputs
+function amortizationRun() {
   const mode = $('#priceOrLoan').value;
-  let price=0, loan=0, down=0;
-  if (mode==='price'){
-    price = +$('#price').value||0;
-    down = +$('#down2').value||0;
+  let price = 0;
+  let loan = 0;
+  if (mode === 'price') {
+    price = +$('#price').value || 0;
+    const down = +$('#down2').value || 0;
     loan = Math.max(0, price - down);
-  }else{
-    loan = +$('#loanAmt').value||0;
-    price = loan; // for LTV checks when price unknown; PMI logic will trigger only by loan/price when price provided
+  } else {
+    loan = +$('#loanAmt').value || 0;
+    price = loan;
   }
-  const ratePct = +$('#rate').value||0;
-  const termY = +$('#term2').value||30;
-  const cadence = $('#cadence').value; // monthly / biweekly
 
-  const pmiPct = +$('#pmiPct2').value||0;
-  const taxRate = (+$('#taxRate2').value||0) + (+$('#extraTaxRate2').value||0);
-  const fixedAssess = +($('#fixedAssess2').value||0);
-  const insYear = +($('#insYear2').value||0);
-  const hoaMo0 = +($('#hoa2').value||0);
-  const taxStep = (+$('#taxStep').value||0)/100;
-  const hoaStep = (+$('#hoaStep').value||0)/100;
+  const rows = MortgageMath.buildAmortizationSchedule({
+    price,
+    loan,
+    ratePct: +$('#rate').value || 0,
+    termY: +$('#term2').value || 30,
+    cadence: $('#cadence').value,
+    pmiPct: +$('#pmiPct2').value || 0,
+    taxRate: (+$('#taxRate2').value || 0) + (+$('#extraTaxRate2').value || 0),
+    fixedAssess: +$('#fixedAssess2').value || 0,
+    insYear: +$('#insYear2').value || 0,
+    hoaMo0: +$('#hoa2').value || 0,
+    taxStep: (+$('#taxStep').value || 0) / 100,
+    hoaStep: (+$('#hoaStep').value || 0) / 100,
+    xtraM: +$('#xtraMonthly').value || 0,
+    xtraA: +$('#xtraAnnual').value || 0,
+    xtraAM: Math.min(12, Math.max(1, +$('#xtraAnnualMonth').value || 1)),
+    xtraOnce: +$('#xtraOnce').value || 0,
+    xtraOnceM: Math.max(1, +$('#xtraOnceMonth').value || 1)
+  });
 
-  const xtraM = +($('#xtraMonthly').value||0);
-  const xtraA = +($('#xtraAnnual').value||0);
-  const xtraAM = Math.min(12, Math.max(1, +($('#xtraAnnualMonth').value||1)));
-  const xtraOnce = +($('#xtraOnce').value||0);
-  const xtraOnceM = Math.max(1, +($('#xtraOnceMonth').value||1));
-
-  const Nmonths = termY*12;
-  const rM = ratePct/100/12;
-
-  // Base monthly payment (no extras)
-  const baseMonthly = pmnt(loan, ratePct, termY);
-
-  // Schedule arrays
-  const rows = [];
-  let bal = loan;
-  let hoaMo = hoaMo0;
-  let taxAnnual = price * (taxRate/100) + fixedAssess;
-  let pmiOn = (price>0 && loan/price >= 0.80);
-  let month = 0;
-
-  // Helper: taxes & insurance monthly for a given year
-  function taxesForYear(y){
-    // y starts at 0
-    return (taxAnnual * Math.pow(1+taxStep, y))/12;
-  }
-  function hoaForYear(y){
-    return hoaMo0 * Math.pow(1+hoaStep, y);
-  }
+  const byYear = new Map();
+  rows.forEach((r) => {
+    const y = Math.floor((r.m - 1) / 12) + 1;
+    if (!byYear.has(y)) byYear.set(y, { y, P: 0, I: 0 });
+    const v = byYear.get(y);
+    v.P += r.prin;
+    v.I += r.int;
+  });
 
   const isAbs = $('#absDollars').checked;
+  const ys = [...byYear.values()].map((o) => o.y);
+  const P = [...byYear.values()].map((o) => o.P);
+  const I = [...byYear.values()].map((o) => o.I);
 
-  // Iterate monthly; if bi-weekly, approximate via 26 half payments/year with interest rate halved per half-month
-  while (bal > 1e-6 && month < Nmonths+240){ // guard
-    month++;
-    const yearIdx = Math.floor((month-1)/12);
-
-    let payment = baseMonthly;
-    let interest = bal * rM;
-    let principal = Math.min(payment - interest, bal);
-
-    // extras
-    let extra = 0;
-    extra += xtraM;
-    if ((month % 12) === (xtraAM % 12)) extra += xtraA;
-    if (month === xtraOnceM) extra += xtraOnce;
-
-    // PMI monthly
-    const pmiMo = pmiOn ? (pmiPct/100)*loan/12 : 0;
-
-    // taxes/ins/hoa
-    const taxesMo = taxesForYear(yearIdx);
-    const insMo = insYear/12;
-    const hoaNow = hoaForYear(yearIdx);
-
-    // apply principal reductions
-    let totalPayment = payment + extra + pmiMo + taxesMo + insMo + hoaNow;
-    bal = Math.max(0, bal - principal - extra);
-
-    // PMI cancel test (80% LTV threshold)
-    if (pmiOn && price>0 && bal <= 0.80*price) pmiOn = false;
-
-    rows.push({
-      m:month, y:yearIdx+1,
-      pay: payment.toFixed(2),
-      prin: principal.toFixed(2),
-      int: interest.toFixed(2),
-      pmi: pmiMo.toFixed(2),
-      tax: taxesMo.toFixed(2),
-      ins: insMo.toFixed(2),
-      hoa: hoaNow.toFixed(2),
-      assess: (fixedAssess/12).toFixed(2),
-      extra: extra.toFixed(2),
-      bal: bal.toFixed(2)
-    });
-    if (bal<=0) break;
-
-    // Bi-weekly approximation: every 6 months, simulate an extra half payment (makes 13 payments/yr)
-    if (cadence==='biweekly' && (month%6===0)){
-      const half = payment/2;
-      const i2 = bal * rM/2;
-      const p2 = Math.min(half - i2, bal);
-      bal = Math.max(0, bal - p2);
-      rows.push({
-        m:month+'.5', y:yearIdx+1,
-        pay: (half).toFixed(2),
-        prin: p2.toFixed(2),
-        int: i2.toFixed(2),
-        pmi: (pmiOn ? (pmiPct/100)*loan/24 : 0).toFixed(2),
-        tax: (taxesMo/2).toFixed(2),
-        ins: (insMo/2).toFixed(2),
-        hoa: (hoaNow/2).toFixed(2),
-        assess: (fixedAssess/24).toFixed(2),
-        extra: '0.00',
-        bal: bal.toFixed(2)
-      });
-      if (pmiOn && price>0 && bal <= 0.80*price) pmiOn = false;
-      if (bal<=0) break;
-    }
-  }
-
-  // Charts
-  // Yearly aggregates
-  const byYear = new Map();
-  rows.forEach(r=>{
-    const y = Math.floor((typeof r.m==='number' ? r.m-1 : Math.floor(Number(r.m)-1))/12)+1;
-    const k = y;
-    if (!byYear.has(k)) byYear.set(k, {y:k, P:0, I:0});
-    const o = byYear.get(k);
-    o.P += Number(r.prin);
-    o.I += Number(r.int);
-  });
-  const ys = [...byYear.values()].map(o=>o.y);
-  const P = [...byYear.values()].map(o=>o.P);
-  const I = [...byYear.values()].map(o=>o.I);
-
-  const stackTraces = isAbs
-    ? [
-        {name:'Principal', x:ys, y:P, type:'bar'},
-        {name:'Interest', x:ys, y:I, type:'bar'}
-      ]
-    : [
-        {name:'Principal %', x:ys, y:P, type:'bar', transforms:[{type:'aggregate', groups:ys, aggregations:[{target:'y', func:'sum', enabled:true}]}]},
-        {name:'Interest %', x:ys, y:I, type:'bar', transforms:[{type:'aggregate', groups:ys, aggregations:[{target:'y', func:'sum', enabled:true}]}]}
-      ];
-
-  Plotly.newPlot('amortStack', stackTraces, {
+  Plotly.newPlot('amortStack', [
+    { name: isAbs ? 'Principal' : 'Principal %', x: ys, y: P, type: 'bar' },
+    { name: isAbs ? 'Interest' : 'Interest %', x: ys, y: I, type: 'bar' }
+  ], {
     barmode: isAbs ? 'stack' : 'relative',
-    title: isAbs ? 'Annual Principal & Interest ($)' : 'Annual Principal vs Interest (100% stacked)',
-    paper_bgcolor:'rgba(0,0,0,0)', plot_bgcolor:'rgba(0,0,0,0)',
-    xaxis:{title:'Year', gridcolor:'#283044'}, yaxis:{title:isAbs?'$':'% of Payment', gridcolor:'#283044'},
-    legend:{orientation:'h', x:0, y:1.2}
-  }, {displaylogo:false, responsive:true});
+    title: isAbs ? 'Annual Principal & Interest ($)' : 'Annual Principal vs Interest',
+    paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+    xaxis: { title: 'Year', gridcolor: '#283044' }, yaxis: { title: isAbs ? '$' : 'Relative', gridcolor: '#283044' }
+  }, { displaylogo: false, responsive: true });
 
-  // Balance line (monthly points only)
-  const mIdx = rows.filter(r=>String(r.m).indexOf('.5')===-1);
-  Plotly.newPlot('balanceLine', [{
-    x: mIdx.map(r=>r.m), y: mIdx.map(r=>Number(r.bal)), mode:'lines', name:'Balance'
-  }], {
-    title:'Ending Balance Over Time',
-    paper_bgcolor:'rgba(0,0,0,0)', plot_bgcolor:'rgba(0,0,0,0)',
-    xaxis:{title:'Month', gridcolor:'#283044'}, yaxis:{title:'$ Balance', gridcolor:'#283044'}
-  }, {displaylogo:false, responsive:true});
+  const monthlyRows = rows.filter((r) => Number.isInteger(r.m));
+  Plotly.newPlot('balanceLine', [{ x: monthlyRows.map((r) => r.m), y: monthlyRows.map((r) => r.bal), mode: 'lines', name: 'Balance' }], {
+    title: 'Ending Balance Over Time',
+    paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+    xaxis: { title: 'Month', gridcolor: '#283044' }, yaxis: { title: '$ Balance', gridcolor: '#283044' }
+  }, { displaylogo: false, responsive: true });
 
-  // Table
   const tbody = $('#amortTable tbody');
   tbody.innerHTML = '';
-  rows.forEach(r=>{
+  rows.forEach((r) => {
     const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td>${r.m}</td><td>${r.y}</td><td>${r.pay}</td><td>${r.prin}</td><td>${r.int}</td><td>${r.pmi}</td>
-      <td>${r.tax}</td><td>${r.ins}</td><td>${r.hoa}</td><td>${r.assess}</td><td>${r.extra}</td><td>${r.bal}</td>`;
+    tr.innerHTML = `<td>${r.m}</td><td>${r.y}</td><td>${r.pay.toFixed(2)}</td><td>${r.prin.toFixed(2)}</td><td>${r.int.toFixed(2)}</td><td>${r.pmi.toFixed(2)}</td><td>${r.tax.toFixed(2)}</td><td>${r.ins.toFixed(2)}</td><td>${r.hoa.toFixed(2)}</td><td>${r.assess.toFixed(2)}</td><td>${r.extra.toFixed(2)}</td><td>${r.bal.toFixed(2)}</td>`;
     tbody.appendChild(tr);
   });
 
-  // init/re-init DataTable
-  if (window._dt) {
-    try { window._dt.destroy(true); } catch(e){}
+  if (dataTable) dataTable.destroy(true);
+  dataTable = window.jQuery('#amortTable').DataTable({
+    paging: true,
+    pageLength: 25,
+    searching: true,
+    ordering: true,
+    responsive: true,
+    scrollY: '320px',
+    scrollX: true,
+    scrollCollapse: true,
+    dom: 'Bfrtip',
+    buttons: ['copy', 'csv', 'excel', 'pdf', 'print']
+  });
+
+  return {
+    rows,
+    price,
+    loan,
+    paymentCount: rows.length,
+    payoffMonths: rows.filter((r) => Number.isInteger(r.m)).length
+  };
+}
+
+
+function renderInsightsPlaceholder(errors = []) {
+  const container = $('#decisionInsights');
+  if (!container) return;
+  const items = errors.length
+    ? `<ul>${errors.map((e) => `<li>${e}</li>`).join('')}</ul>`
+    : '<p>Enter affordability + amortization values to generate insights.</p>';
+  container.innerHTML = `
+    <div class="card">
+      <h3>Decision Insights (preview)</h3>
+      <p>Insights shown here include: scenario compare, sensitivity, risk metrics, points break-even, 5-year ownership, and uncertainty range.</p>
+      ${items}
+    </div>
+  `;
+}
+
+function renderDecisionInsights(aff, amort) {
+  const container = $('#decisionInsights');
+  if (!container || !aff || !amort) return;
+
+  const monthlyIncome = +($('#monthlyIncome')?.value || 0);
+  const liquidCash = +($('#liquidCash')?.value || 0);
+
+  const dti = monthlyIncome > 0 ? (aff.totalAtBase / monthlyIncome) * 100 : 0;
+  const reservesMonths = aff.totalAtBase > 0 ? liquidCash / aff.totalAtBase : 0;
+
+  const stressRate = aff.baseRate + 1;
+  const stressPrice = MortgageMath.solveAffordablePrice({
+    budget: aff.budget,
+    down: aff.down,
+    term: aff.term,
+    rate: stressRate,
+    taxRate: aff.taxRate,
+    fixedAssess: aff.fixedAssess,
+    insMo: aff.insMo,
+    hoa: aff.hoa,
+    pmiPct: aff.pmiPct
+  });
+
+  const pointsCost = (aff.pointsPct / 100) * aff.loanAtBase;
+  const noPointMonthly = MortgageMath.affordabilityAtRate({
+    price: aff.priceAtBase,
+    down: aff.down,
+    term: aff.term,
+    rate: aff.baseRate,
+    taxRate: aff.taxRate,
+    fixedAssess: aff.fixedAssess,
+    insMo: aff.insMo,
+    hoa: aff.hoa,
+    pmiPct: aff.pmiPct
+  }).total;
+  const withPointMonthly = aff.totalAtBase;
+  const monthlySavings = Math.max(0, noPointMonthly - withPointMonthly);
+  const hasBuydown = ((+$('#buydownBps').value || 0) > 0) && pointsCost > 0;
+  const breakEvenMonths = (hasBuydown && monthlySavings > 0) ? (pointsCost / monthlySavings) : Infinity;
+
+  const amort5y = amort.rows.filter((r) => Number.isInteger(r.m) && r.m <= 60);
+  const int5y = amort5y.reduce((a, r) => a + r.int, 0);
+  const prin5y = amort5y.reduce((a, r) => a + r.prin + r.extra, 0);
+  const carry5y = amort5y.reduce((a, r) => a + r.pay + r.tax + r.ins + r.hoa + r.assess + r.pmi, 0);
+
+  const best = aff.baseRate - 0.5;
+  const worst = aff.baseRate + 0.5;
+  const bestPrice = MortgageMath.solveAffordablePrice({ budget: aff.budget, down: aff.down, term: aff.term, rate: best, taxRate: aff.taxRate, fixedAssess: aff.fixedAssess, insMo: aff.insMo, hoa: aff.hoa, pmiPct: aff.pmiPct });
+  const worstPrice = MortgageMath.solveAffordablePrice({ budget: aff.budget, down: aff.down, term: aff.term, rate: worst, taxRate: aff.taxRate, fixedAssess: aff.fixedAssess, insMo: aff.insMo, hoa: aff.hoa, pmiPct: aff.pmiPct });
+
+  const scenarios = [
+    ['Base', aff.baseRate, aff.down],
+    ['Wait (rate +0.5%)', aff.baseRate + 0.5, aff.down],
+    ['Bigger down (+$10k)', aff.baseRate, aff.down + 10000]
+  ].map(([label, rate, down]) => {
+    const price = MortgageMath.solveAffordablePrice({ budget: aff.budget, down, term: aff.term, rate, taxRate: aff.taxRate, fixedAssess: aff.fixedAssess, insMo: aff.insMo, hoa: aff.hoa, pmiPct: aff.pmiPct });
+    const total = MortgageMath.affordabilityAtRate({ price, down, term: aff.term, rate, taxRate: aff.taxRate, fixedAssess: aff.fixedAssess, insMo: aff.insMo, hoa: aff.hoa, pmiPct: aff.pmiPct }).total;
+    return { label, rate, down, price, total };
+  });
+
+  const sens = [
+    ['Rate +0.5%', aff.baseRate + 0.5, aff.priceAtBase],
+    ['Rate -0.5%', aff.baseRate - 0.5, aff.priceAtBase],
+    ['Price +10%', aff.baseRate, aff.priceAtBase * 1.1],
+    ['Price -10%', aff.baseRate, aff.priceAtBase * 0.9]
+  ].map(([label, rate, price]) => {
+    const total = MortgageMath.affordabilityAtRate({ price, down: aff.down, term: aff.term, rate, taxRate: aff.taxRate, fixedAssess: aff.fixedAssess, insMo: aff.insMo, hoa: aff.hoa, pmiPct: aff.pmiPct }).total;
+    return { label, total, delta: total - aff.totalAtBase };
+  });
+
+  container.innerHTML = `
+    <div class="insight-grid">
+      <div class="card"><h3>Scenario compare</h3><table class="insight-table"><tr><th>Scenario</th><th>Rate</th><th>Max Price</th><th>Monthly</th></tr>${scenarios.map((s) => `<tr><td>${s.label}</td><td>${s.rate.toFixed(2)}%</td><td>${money(s.price)}</td><td>${money(s.total)}</td></tr>`).join('')}</table></div>
+      <div class="card"><h3>Sensitivity</h3><table class="insight-table"><tr><th>Change</th><th>Monthly</th><th>Δ vs Base</th></tr>${sens.map((s) => `<tr><td>${s.label}</td><td>${money(s.total)}</td><td>${money(s.delta)}</td></tr>`).join('')}</table></div>
+    </div>
+    <div class="insight-grid">
+      <div class="card"><h3>Risk metrics</h3><p>Payment/Income (DTI): <strong>${dti ? dti.toFixed(1) + '%' : 'Add monthly income below'}</strong></p><p>Cash reserves: <strong>${reservesMonths ? reservesMonths.toFixed(1) : '0.0'} months</strong></p><p>Stress-rate (base +1%) max price: <strong>${money(stressPrice)}</strong></p></div>
+      <div class="card"><h3>Break-even + 5-year view</h3><p>Points cost: <strong>${money(pointsCost)}</strong></p><p>Break-even: <strong>${Number.isFinite(breakEvenMonths) ? breakEvenMonths.toFixed(1) + ' months' : 'Set both points % and buydown bps'}</strong></p><p>5-year interest paid: <strong>${money(int5y)}</strong></p><p>5-year principal+extra paid: <strong>${money(prin5y)}</strong></p><p>5-year carrying cost: <strong>${money(carry5y)}</strong></p></div>
+      <div class="card"><h3>Uncertainty range (rate ±0.5%)</h3><p>Best-case max price: <strong>${money(bestPrice)}</strong></p><p>Base max price: <strong>${money(aff.priceAtBase)}</strong></p><p>Worst-case max price: <strong>${money(worstPrice)}</strong></p></div>
+    </div>
+  `;
+}
+
+async function recalc() {
+  saveState();
+  syncLinkedInputs();
+  const isValid = validateInputs();
+  if (!isValid) {
+    const errs = MortgageMath.validateScenarioInputs(collectValidationInput());
+    renderInsightsPlaceholder(errs);
+    return;
   }
-  window._dt = window.jQuery('#amortTable').DataTable({
-    paging:true,
-    pageLength:25,
-    searching:true,
-    ordering:true,
-    responsive:true,
-    dom:'Bfrtip',
-    buttons:['copy','csv','excel','pdf','print']
-  });
+  try {
+    await ensureVendorLibs();
+  } catch (err) {
+    console.error(err);
+    renderValidationErrors(['Unable to load chart/table libraries. Check that vendor files are reachable from this URL.']);
+    renderInsightsPlaceholder(['Unable to render full insights until vendor libraries load.']);
+    return;
+  }
+
+  const affSummary = affordabilityRun();
+  const amortSummary = amortizationRun();
+  renderDecisionInsights(affSummary, amortSummary);
 }
 
-// ----------------- Event wiring -----------------
-function recalc(){ saveState(); affordabilityRun(); amortizationRun(); }
-function wire(){
-  // Tab buttons
-
-  // Global toggles
-  $('#afterTax').onchange = ()=>{ showTaxBlock(); recalc(); };
-
-  // All inputs trigger recalc
-  document.querySelectorAll('input,select').forEach(el=>{
-    el.addEventListener('input', ()=>recalc());
-    el.addEventListener('change', ()=>recalc());
+function wire() {
+  $('#afterTax').addEventListener('change', () => {
+    showTaxBlock();
+    recalc();
   });
 
-  // Price vs Loan toggle
-  $('#priceOrLoan').addEventListener('change', ()=>{ togglePriceLoan(); recalc(); });
+  $('#linkInputs')?.addEventListener('change', () => {
+    syncLinkedInputs();
+    recalc();
+  });
 
-  // Buttons
-  $('#btnSave').onclick = ()=>{ saveState(); alert('Saved.'); };
-  $('#btnLoad').onclick = ()=>{ if(loadState()){ togglePriceLoan(); recalc(); } else alert('Nothing saved.'); };
-  $('#btnReset').onclick = ()=>{ localStorage.removeItem('mortgageToolkit'); location.reload(); };
-  $('#btnShare').onclick = ()=>shareLink();
+  document.querySelectorAll('input,select').forEach((el) => {
+    el.addEventListener('input', () => recalc());
+    el.addEventListener('change', () => recalc());
+  });
+
+  $('#priceOrLoan').addEventListener('change', () => {
+    togglePriceLoan();
+    recalc();
+  });
+
+  $('#btnSave').addEventListener('click', () => {
+    saveState();
+    alert('Saved.');
+  });
+  $('#btnLoad').addEventListener('click', () => {
+    if (loadState()) {
+      togglePriceLoan();
+      recalc();
+    } else {
+      alert('Nothing saved.');
+    }
+  });
+  $('#btnReset').addEventListener('click', () => {
+    localStorage.removeItem('mortgageToolkit');
+    location.reload();
+  });
+  $('#btnShare').addEventListener('click', shareLink);
 }
 
-(function init(){
-  if (tryLoadFromHash()) loadState();
-  else loadState();
-
+(function init() {
+  if (tryLoadFromHash()) loadState(); else loadState();
+  enhanceAccessibility();
   showTaxBlock();
   togglePriceLoan();
+  syncLinkedInputs();
   wire();
+  renderInsightsPlaceholder();
   recalc();
 })();
