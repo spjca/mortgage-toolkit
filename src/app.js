@@ -372,6 +372,22 @@ function amortizationRun() {
   };
 }
 
+
+function renderInsightsPlaceholder(errors = []) {
+  const container = $('#decisionInsights');
+  if (!container) return;
+  const items = errors.length
+    ? `<ul>${errors.map((e) => `<li>${e}</li>`).join('')}</ul>`
+    : '<p>Enter affordability + amortization values to generate insights.</p>';
+  container.innerHTML = `
+    <div class="card">
+      <h3>Decision Insights (preview)</h3>
+      <p>Insights shown here include: scenario compare, sensitivity, risk metrics, points break-even, 5-year ownership, and uncertainty range.</p>
+      ${items}
+    </div>
+  `;
+}
+
 function renderDecisionInsights(aff, amort) {
   const container = $('#decisionInsights');
   if (!container || !aff || !amort) return;
@@ -409,7 +425,8 @@ function renderDecisionInsights(aff, amort) {
   }).total;
   const withPointMonthly = aff.totalAtBase;
   const monthlySavings = Math.max(0, noPointMonthly - withPointMonthly);
-  const breakEvenMonths = monthlySavings > 0 ? pointsCost / monthlySavings : Infinity;
+  const hasBuydown = ((+$('#buydownBps').value || 0) > 0) && pointsCost > 0;
+  const breakEvenMonths = (hasBuydown && monthlySavings > 0) ? (pointsCost / monthlySavings) : Infinity;
 
   const amort5y = amort.rows.filter((r) => Number.isInteger(r.m) && r.m <= 60);
   const int5y = amort5y.reduce((a, r) => a + r.int, 0);
@@ -448,7 +465,7 @@ function renderDecisionInsights(aff, amort) {
     </div>
     <div class="insight-grid">
       <div class="card"><h3>Risk metrics</h3><p>Payment/Income (DTI): <strong>${dti ? dti.toFixed(1) + '%' : 'Add monthly income below'}</strong></p><p>Cash reserves: <strong>${reservesMonths ? reservesMonths.toFixed(1) : '0.0'} months</strong></p><p>Stress-rate (base +1%) max price: <strong>${money(stressPrice)}</strong></p></div>
-      <div class="card"><h3>Break-even + 5-year view</h3><p>Points cost: <strong>${money(pointsCost)}</strong></p><p>Break-even: <strong>${Number.isFinite(breakEvenMonths) ? breakEvenMonths.toFixed(1) + ' months' : 'No monthly savings'}</strong></p><p>5-year interest paid: <strong>${money(int5y)}</strong></p><p>5-year principal+extra paid: <strong>${money(prin5y)}</strong></p><p>5-year carrying cost: <strong>${money(carry5y)}</strong></p></div>
+      <div class="card"><h3>Break-even + 5-year view</h3><p>Points cost: <strong>${money(pointsCost)}</strong></p><p>Break-even: <strong>${Number.isFinite(breakEvenMonths) ? breakEvenMonths.toFixed(1) + ' months' : 'Set both points % and buydown bps'}</strong></p><p>5-year interest paid: <strong>${money(int5y)}</strong></p><p>5-year principal+extra paid: <strong>${money(prin5y)}</strong></p><p>5-year carrying cost: <strong>${money(carry5y)}</strong></p></div>
       <div class="card"><h3>Uncertainty range (rate ±0.5%)</h3><p>Best-case max price: <strong>${money(bestPrice)}</strong></p><p>Base max price: <strong>${money(aff.priceAtBase)}</strong></p><p>Worst-case max price: <strong>${money(worstPrice)}</strong></p></div>
     </div>
   `;
@@ -457,7 +474,11 @@ function renderDecisionInsights(aff, amort) {
 async function recalc() {
   saveState();
   const isValid = validateInputs();
-  if (!isValid) return;
+  if (!isValid) {
+    const errs = MortgageMath.validateScenarioInputs(collectValidationInput());
+    renderInsightsPlaceholder(errs);
+    return;
+  }
   await ensureVendorLibs();
   const affSummary = affordabilityRun();
   const amortSummary = amortizationRun();
@@ -505,5 +526,6 @@ function wire() {
   showTaxBlock();
   togglePriceLoan();
   wire();
+  renderInsightsPlaceholder();
   recalc();
 })();
