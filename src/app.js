@@ -9,40 +9,14 @@ const APP_BASE = (() => {
   return appScript.src.replace(/src\/app\.js(?:\?.*)?$/, '');
 })();
 
-const APP_BASE_CANDIDATES = (() => {
-  const parts = window.location.pathname.split('/').filter(Boolean);
-  const repoBase = parts.length ? `${window.location.origin}/${parts[0]}/` : `${window.location.origin}/`;
-  return [...new Set([
-    APP_BASE,
-    repoBase,
-    new URL('./', window.location.href).href
-  ])];
-})();
-
 function loadScript(src) {
   return new Promise((resolve, reject) => {
-    let idx = 0;
-
-    const tryNext = () => {
-      if (idx >= APP_BASE_CANDIDATES.length) {
-        reject(new Error(`Failed to load ${src} from bases: ${APP_BASE_CANDIDATES.join(', ')}`));
-        return;
-      }
-
-      const base = APP_BASE_CANDIDATES[idx++];
-      const scriptUrl = new URL(src, base).href;
-      const s = document.createElement('script');
-      s.src = scriptUrl;
-      s.async = false;
-      s.onload = resolve;
-      s.onerror = () => {
-        s.remove();
-        tryNext();
-      };
-      document.head.appendChild(s);
-    };
-
-    tryNext();
+    const s = document.createElement('script');
+    s.src = new URL(src, APP_BASE).href;
+    s.async = false;
+    s.onload = resolve;
+    s.onerror = () => reject(new Error(`Failed to load ${src}`));
+    document.head.appendChild(s);
   });
 }
 
