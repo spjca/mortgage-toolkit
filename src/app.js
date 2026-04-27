@@ -5,7 +5,8 @@ let libsReadyPromise;
 let dataTable;
 const APP_BASE = (() => {
   const appScript = [...document.querySelectorAll('script[src]')].find((el) => el.src.includes('/src/app.js') || el.getAttribute('src') === 'src/app.js');
-  return new URL('.', appScript ? appScript.src : window.location.href).href;
+  if (!appScript) return new URL('./', window.location.href).href;
+  return appScript.src.replace(/src\/app\.js(?:\?.*)?$/, '');
 })();
 
 function loadScript(src) {
