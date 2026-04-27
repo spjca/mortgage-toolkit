@@ -11,7 +11,7 @@
 <body>
   <header>
     <h1>Mortgage Toolkit</h1>
-    <div class="kpis" id="kpis">
+    <div class="kpis" id="kpis" aria-live="polite" aria-atomic="true">
       <div class="kpi" id="kpi-price">Max Price — $0</div>
       <div class="kpi" id="kpi-monthly">Initial Monthly — $0</div>
       <div class="kpi" id="kpi-loan">Loan — $0</div>
@@ -27,6 +27,7 @@
 
   <div class="container">
     <aside id="controls">
+      <div id="validationErrors" class="validation-errors" role="alert" aria-live="assertive" style="display:none"></div>
       <fieldset>
         <legend>Global</legend>
         <label><input type="checkbox" id="afterTax"> After-tax view (CA)</label>
@@ -53,6 +54,15 @@
           </div>
           <label><input type="checkbox" id="autoItemize" checked> Auto choose itemize vs standard</label>
         </div>
+      </fieldset>
+
+
+      <fieldset>
+        <legend>Decision Inputs</legend>
+        <label>Gross monthly income ($)</label>
+        <input type="number" id="monthlyIncome" value="0" step="100">
+        <label>Liquid cash reserves ($)</label>
+        <input type="number" id="liquidCash" value="0" step="1000">
       </fieldset>
 
       <fieldset>
@@ -235,6 +245,10 @@
         </div>
       </section>
 
+
+      <h2 style="margin:10px 0 6px 0;font-size:16px;color:#cfe0ff;">Decision Insights</h2>
+      <section id="decisionInsights" aria-live="polite"></section>
+
       <h2 style="margin:10px 0 6px 0;font-size:16px;color:#cfe0ff;">Amortization</h2>
       <section id="amortSection">
         <div class="grid2">
@@ -266,18 +280,8 @@
     <p><em>Disclosure:</em> This application is informational only and not financial advice. Calculations are approximations; consult professionals before decisions. California after-tax view uses simplified assumptions (SALT cap and first-year deductions). © <a href="https://www.seanpj.com" target="_blank" rel="noopener">seanpj.com</a></p>
   </footer>
 
-  <!-- Vendor libs (order matters) -->
-  <script src="vendor/plotly.min.js"></script>
-  <script src="vendor/jquery-3.7.1.min.js"></script>
-  <script src="vendor/jquery.dataTables.min.js"></script>
-  <script src="vendor/dataTables.buttons.min.js"></script>
-  <script src="vendor/jszip.min.js"></script>
-  <script src="vendor/pdfmake.min.js"></script>
-  <script src="vendor/vfs_fonts.js"></script>
-  <script src="vendor/buttons.html5.min.js"></script>
-  <script src="vendor/buttons.print.min.js"></script>
-  <script src="vendor/html2canvas.min.js"></script>
-
+  <!-- App scripts (vendor libraries are lazy-loaded by app.js) -->
+  <script src="src/core.js"></script>
   <script src="src/app.js"></script>
 </body>
 </html>
