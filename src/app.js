@@ -3,11 +3,15 @@ const money = (n) => '$' + (Math.round(n * 100) / 100).toLocaleString(undefined,
 
 let libsReadyPromise;
 let dataTable;
+const APP_BASE = (() => {
+  const appScript = [...document.querySelectorAll('script[src]')].find((el) => el.src.includes('/src/app.js') || el.getAttribute('src') === 'src/app.js');
+  return new URL('.', appScript ? appScript.src : window.location.href).href;
+})();
 
 function loadScript(src) {
   return new Promise((resolve, reject) => {
     const s = document.createElement('script');
-    s.src = src;
+    s.src = new URL(src, APP_BASE).href;
     s.async = false;
     s.onload = resolve;
     s.onerror = () => reject(new Error(`Failed to load ${src}`));
@@ -55,9 +59,41 @@ function enhanceAccessibility() {
   });
 }
 
+
+function syncLinkedInputs() {
+  const linked = $('#linkInputs')?.checked;
+  const mappings = [
+    ['baseRate', 'rate', (v) => Math.max(0, v - ((+$('#buydownBps').value || 0) / 100))],
+    ['term', 'term2'],
+    ['taxRate', 'taxRate2'],
+    ['extraTaxRate', 'extraTaxRate2'],
+    ['fixedAssess', 'fixedAssess2'],
+    ['insYear', 'insYear2'],
+    ['hoa', 'hoa2'],
+    ['pmiPct', 'pmiPct2'],
+    ['down', 'down2']
+  ];
+
+  mappings.forEach(([src, target, transform]) => {
+    const srcEl = document.getElementById(src);
+    const tgtEl = document.getElementById(target);
+    if (!srcEl || !tgtEl) return;
+    if (linked) {
+      const raw = Number(srcEl.value || 0);
+      const value = transform ? transform(raw) : raw;
+      tgtEl.value = Number.isFinite(value) ? value : 0;
+      tgtEl.setAttribute('readonly', 'readonly');
+      tgtEl.setAttribute('aria-readonly', 'true');
+    } else {
+      tgtEl.removeAttribute('readonly');
+      tgtEl.removeAttribute('aria-readonly');
+    }
+  });
+}
+
 function saveState() {
   const ids = [
-    'afterTax', 'fedMarg', 'caMarg', 'saltCap', 'stdDed', 'autoItemize', 'monthlyIncome', 'liquidCash', 'maxMonthly', 'down', 'term', 'baseRate', 'rMin', 'rMax',
+    'afterTax', 'linkInputs', 'fedMarg', 'caMarg', 'saltCap', 'stdDed', 'autoItemize', 'monthlyIncome', 'liquidCash', 'maxMonthly', 'down', 'term', 'baseRate', 'rMin', 'rMax',
     'taxRate', 'extraTaxRate', 'fixedAssess', 'insYear', 'hoa', 'pmiPct', 'pointsPct', 'buydownBps',
     'priceOrLoan', 'price', 'loanAmt', 'down2', 'rate', 'term2', 'cadence', 'taxRate2', 'extraTaxRate2', 'fixedAssess2', 'insYear2',
     'hoa2', 'pmiPct2', 'taxStep', 'hoaStep', 'xtraMonthly', 'xtraAnnual', 'xtraAnnualMonth', 'xtraOnce', 'xtraOnceMonth', 'absDollars'
@@ -359,6 +395,9 @@ function amortizationRun() {
     searching: true,
     ordering: true,
     responsive: true,
+    scrollY: '320px',
+    scrollX: true,
+    scrollCollapse: true,
     dom: 'Bfrtip',
     buttons: ['copy', 'csv', 'excel', 'pdf', 'print']
   });
@@ -473,13 +512,22 @@ function renderDecisionInsights(aff, amort) {
 
 async function recalc() {
   saveState();
+  syncLinkedInputs();
   const isValid = validateInputs();
   if (!isValid) {
     const errs = MortgageMath.validateScenarioInputs(collectValidationInput());
     renderInsightsPlaceholder(errs);
     return;
   }
-  await ensureVendorLibs();
+  try {
+    await ensureVendorLibs();
+  } catch (err) {
+    console.error(err);
+    renderValidationErrors(['Unable to load chart/table libraries. Check that vendor files are reachable from this URL.']);
+    renderInsightsPlaceholder(['Unable to render full insights until vendor libraries load.']);
+    return;
+  }
+
   const affSummary = affordabilityRun();
   const amortSummary = amortizationRun();
   renderDecisionInsights(affSummary, amortSummary);
@@ -488,6 +536,11 @@ async function recalc() {
 function wire() {
   $('#afterTax').addEventListener('change', () => {
     showTaxBlock();
+    recalc();
+  });
+
+  $('#linkInputs')?.addEventListener('change', () => {
+    syncLinkedInputs();
     recalc();
   });
 
@@ -525,6 +578,7 @@ function wire() {
   enhanceAccessibility();
   showTaxBlock();
   togglePriceLoan();
+  syncLinkedInputs();
   wire();
   renderInsightsPlaceholder();
   recalc();

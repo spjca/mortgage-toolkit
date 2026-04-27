@@ -23,7 +23,7 @@ input[type="checkbox"]{width:auto}
 .tabbar button.active{background:#1c2637;border-color:#3a4f75}
 .card{background:var(--panel);border-radius:12px;padding:12px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.table-wrap{background:var(--panel);border-radius:12px;padding:12px}
+.table-wrap{background:var(--panel);border-radius:12px;padding:12px;max-height:420px;overflow:auto}
 footer{padding:16px 20px;color:#9aa4b2;font-size:12px;border-top:1px solid #202534}
 a{color:var(--accent)}
 .dataTables_wrapper .dt-buttons .dt-button{background:#223048;color:#cfe0ff;border-radius:8px;border:1px solid #33507d}
