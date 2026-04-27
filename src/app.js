@@ -130,6 +130,43 @@ function togglePriceLoan() {
   enhanceAccessibility();
 }
 
+
+function collectValidationInput() {
+  const mode = $('#priceOrLoan').value;
+  return {
+    maxMonthly: +$('#maxMonthly').value,
+    down: +$('#down').value,
+    term: +$('#term').value,
+    baseRate: +$('#baseRate').value,
+    rMin: +$('#rMin').value,
+    rMax: +$('#rMax').value,
+    taxRate: +$('#taxRate').value,
+    rate: +$('#rate').value,
+    term2: +$('#term2').value,
+    price: mode === 'price' ? +($('#price')?.value || 0) : undefined,
+    down2: mode === 'price' ? +($('#down2')?.value || 0) : undefined,
+    loan: mode === 'loan' ? +($('#loanAmt')?.value || 0) : undefined
+  };
+}
+
+function renderValidationErrors(errors) {
+  const box = $('#validationErrors');
+  if (!box) return;
+  if (!errors.length) {
+    box.style.display = 'none';
+    box.innerHTML = '';
+    return;
+  }
+  box.style.display = 'block';
+  box.innerHTML = `<strong>Please fix the following input issues:</strong><ul>${errors.map((e) => `<li>${e}</li>`).join('')}</ul>`;
+}
+
+function validateInputs() {
+  const errors = MortgageMath.validateScenarioInputs(collectValidationInput());
+  renderValidationErrors(errors);
+  return errors.length === 0;
+}
+
 function affordabilityRun() {
   const budget = +$('#maxMonthly').value || 0;
   const down = +$('#down').value || 0;
@@ -298,6 +335,8 @@ function amortizationRun() {
 
 async function recalc() {
   saveState();
+  const isValid = validateInputs();
+  if (!isValid) return;
   await ensureVendorLibs();
   affordabilityRun();
   amortizationRun();

@@ -5,7 +5,8 @@ const {
   firstYearTaxSavings,
   solveAffordablePrice,
   affordabilityAtRate,
-  buildAmortizationSchedule
+  buildAmortizationSchedule,
+  validateScenarioInputs
 } = require('../src/core.js');
 
 test('pmnt returns known monthly payment sample', () => {
@@ -79,4 +80,25 @@ test('amortization schedule pays off and cancels PMI', () => {
   assert.equal(rows.at(-1).bal, 0);
   assert.ok(rows.some((r) => r.pmi > 0));
   assert.ok(rows.some((r) => r.pmi === 0));
+});
+
+
+test('validateScenarioInputs returns useful field errors', () => {
+  const errors = validateScenarioInputs({
+    maxMonthly: -1,
+    down: 1000,
+    term: 0,
+    baseRate: 6,
+    rMin: 8,
+    rMax: 6,
+    price: 300000,
+    down2: 350000,
+    term2: 0,
+    rate: 6.5
+  });
+
+  assert.ok(errors.some((e) => e.includes('cannot be negative')));
+  assert.ok(errors.some((e) => e.includes('term must be greater than 0')));
+  assert.ok(errors.some((e) => e.includes('Rate min')));
+  assert.ok(errors.some((e) => e.includes('Down payment')));
 });
