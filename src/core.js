@@ -154,6 +154,7 @@
 
     nonNegative.forEach(([k, label]) => {
       if (k in input) {
+        if (input[k] === undefined || input[k] === null || input[k] === '') return;
         const v = num(input[k]);
         if (!Number.isFinite(v)) errors.push(`${label} must be a valid number.`);
         if (Number.isFinite(v) && v < 0) errors.push(`${label} cannot be negative.`);
@@ -163,8 +164,8 @@
     if ('term' in input && num(input.term) <= 0) errors.push('Affordability term must be greater than 0.');
     if ('term2' in input && num(input.term2) <= 0) errors.push('Amortization term must be greater than 0.');
     if ('rMin' in input && 'rMax' in input && num(input.rMin) > num(input.rMax)) errors.push('Rate min cannot be greater than rate max.');
-    if ('price' in input && 'down2' in input && num(input.down2) > num(input.price)) errors.push('Down payment cannot exceed purchase price.');
-    if ('price' in input && num(input.price) === 0 && 'down2' in input && num(input.down2) > 0) errors.push('Down payment requires purchase price greater than 0.');
+    if ('price' in input && input.price !== undefined && 'down2' in input && input.down2 !== undefined && num(input.down2) > num(input.price)) errors.push('Down payment cannot exceed purchase price.');
+    if ('price' in input && input.price !== undefined && num(input.price) === 0 && 'down2' in input && input.down2 !== undefined && num(input.down2) > 0) errors.push('Down payment requires purchase price greater than 0.');
 
     return errors;
   }

@@ -102,3 +102,23 @@ test('validateScenarioInputs returns useful field errors', () => {
   assert.ok(errors.some((e) => e.includes('Rate min')));
   assert.ok(errors.some((e) => e.includes('Down payment')));
 });
+
+
+test('validateScenarioInputs ignores omitted purchase-price fields in loan mode', () => {
+  const errors = validateScenarioInputs({
+    maxMonthly: 2000,
+    down: 20000,
+    term: 30,
+    baseRate: 6.5,
+    rMin: 2,
+    rMax: 10,
+    taxRate: 1.2,
+    rate: 6.5,
+    term2: 30,
+    loan: 250000,
+    price: undefined,
+    down2: undefined
+  });
+
+  assert.ok(!errors.some((e) => e.includes('Purchase price must be a valid number')));
+});

@@ -133,7 +133,7 @@ function togglePriceLoan() {
 
 function collectValidationInput() {
   const mode = $('#priceOrLoan').value;
-  return {
+  const base = {
     monthlyIncome: +($('#monthlyIncome')?.value || 0),
     liquidCash: +($('#liquidCash')?.value || 0),
     maxMonthly: +$('#maxMonthly').value,
@@ -144,10 +144,20 @@ function collectValidationInput() {
     rMax: +$('#rMax').value,
     taxRate: +$('#taxRate').value,
     rate: +$('#rate').value,
-    term2: +$('#term2').value,
-    price: mode === 'price' ? +($('#price')?.value || 0) : undefined,
-    down2: mode === 'price' ? +($('#down2')?.value || 0) : undefined,
-    loan: mode === 'loan' ? +($('#loanAmt')?.value || 0) : undefined
+    term2: +$('#term2').value
+  };
+
+  if (mode === 'price') {
+    return {
+      ...base,
+      price: +($('#price')?.value || 0),
+      down2: +($('#down2')?.value || 0)
+    };
+  }
+
+  return {
+    ...base,
+    loan: +($('#loanAmt')?.value || 0)
   };
 }
 
