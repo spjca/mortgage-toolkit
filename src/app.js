@@ -57,7 +57,7 @@ function enhanceAccessibility() {
 
 function saveState() {
   const ids = [
-    'afterTax', 'fedMarg', 'caMarg', 'saltCap', 'stdDed', 'autoItemize', 'maxMonthly', 'down', 'term', 'baseRate', 'rMin', 'rMax',
+    'afterTax', 'fedMarg', 'caMarg', 'saltCap', 'stdDed', 'autoItemize', 'monthlyIncome', 'liquidCash', 'maxMonthly', 'down', 'term', 'baseRate', 'rMin', 'rMax',
     'taxRate', 'extraTaxRate', 'fixedAssess', 'insYear', 'hoa', 'pmiPct', 'pointsPct', 'buydownBps',
     'priceOrLoan', 'price', 'loanAmt', 'down2', 'rate', 'term2', 'cadence', 'taxRate2', 'extraTaxRate2', 'fixedAssess2', 'insYear2',
     'hoa2', 'pmiPct2', 'taxStep', 'hoaStep', 'xtraMonthly', 'xtraAnnual', 'xtraAnnualMonth', 'xtraOnce', 'xtraOnceMonth', 'absDollars'
@@ -134,6 +134,8 @@ function togglePriceLoan() {
 function collectValidationInput() {
   const mode = $('#priceOrLoan').value;
   return {
+    monthlyIncome: +($('#monthlyIncome')?.value || 0),
+    liquidCash: +($('#liquidCash')?.value || 0),
     maxMonthly: +$('#maxMonthly').value,
     down: +$('#down').value,
     term: +$('#term').value,
@@ -247,6 +249,25 @@ function affordabilityRun() {
   $('#kpi-price').textContent = `Max Price — ${money(priceAtBase)}`;
   $('#kpi-loan').textContent = `Loan — ${money(loanAtBase)}`;
   $('#kpi-cash').textContent = `Cash to Close — ${money(cashToClose)}`;
+
+  return {
+    budget,
+    down,
+    term,
+    baseRate,
+    taxRate,
+    fixedAssess,
+    insMo,
+    hoa,
+    pmiPct,
+    pointsPct,
+    rates,
+    seriesPrice,
+    priceAtBase,
+    loanAtBase,
+    totalAtBase,
+    cashToClose
+  };
 }
 
 function amortizationRun() {
@@ -331,6 +352,96 @@ function amortizationRun() {
     dom: 'Bfrtip',
     buttons: ['copy', 'csv', 'excel', 'pdf', 'print']
   });
+
+  return {
+    rows,
+    price,
+    loan,
+    paymentCount: rows.length,
+    payoffMonths: rows.filter((r) => Number.isInteger(r.m)).length
+  };
+}
+
+function renderDecisionInsights(aff, amort) {
+  const container = $('#decisionInsights');
+  if (!container || !aff || !amort) return;
+
+  const monthlyIncome = +($('#monthlyIncome')?.value || 0);
+  const liquidCash = +($('#liquidCash')?.value || 0);
+
+  const dti = monthlyIncome > 0 ? (aff.totalAtBase / monthlyIncome) * 100 : 0;
+  const reservesMonths = aff.totalAtBase > 0 ? liquidCash / aff.totalAtBase : 0;
+
+  const stressRate = aff.baseRate + 1;
+  const stressPrice = MortgageMath.solveAffordablePrice({
+    budget: aff.budget,
+    down: aff.down,
+    term: aff.term,
+    rate: stressRate,
+    taxRate: aff.taxRate,
+    fixedAssess: aff.fixedAssess,
+    insMo: aff.insMo,
+    hoa: aff.hoa,
+    pmiPct: aff.pmiPct
+  });
+
+  const pointsCost = (aff.pointsPct / 100) * aff.loanAtBase;
+  const noPointMonthly = MortgageMath.affordabilityAtRate({
+    price: aff.priceAtBase,
+    down: aff.down,
+    term: aff.term,
+    rate: aff.baseRate,
+    taxRate: aff.taxRate,
+    fixedAssess: aff.fixedAssess,
+    insMo: aff.insMo,
+    hoa: aff.hoa,
+    pmiPct: aff.pmiPct
+  }).total;
+  const withPointMonthly = aff.totalAtBase;
+  const monthlySavings = Math.max(0, noPointMonthly - withPointMonthly);
+  const breakEvenMonths = monthlySavings > 0 ? pointsCost / monthlySavings : Infinity;
+
+  const amort5y = amort.rows.filter((r) => Number.isInteger(r.m) && r.m <= 60);
+  const int5y = amort5y.reduce((a, r) => a + r.int, 0);
+  const prin5y = amort5y.reduce((a, r) => a + r.prin + r.extra, 0);
+  const carry5y = amort5y.reduce((a, r) => a + r.pay + r.tax + r.ins + r.hoa + r.assess + r.pmi, 0);
+
+  const best = aff.baseRate - 0.5;
+  const worst = aff.baseRate + 0.5;
+  const bestPrice = MortgageMath.solveAffordablePrice({ budget: aff.budget, down: aff.down, term: aff.term, rate: best, taxRate: aff.taxRate, fixedAssess: aff.fixedAssess, insMo: aff.insMo, hoa: aff.hoa, pmiPct: aff.pmiPct });
+  const worstPrice = MortgageMath.solveAffordablePrice({ budget: aff.budget, down: aff.down, term: aff.term, rate: worst, taxRate: aff.taxRate, fixedAssess: aff.fixedAssess, insMo: aff.insMo, hoa: aff.hoa, pmiPct: aff.pmiPct });
+
+  const scenarios = [
+    ['Base', aff.baseRate, aff.down],
+    ['Wait (rate +0.5%)', aff.baseRate + 0.5, aff.down],
+    ['Bigger down (+$10k)', aff.baseRate, aff.down + 10000]
+  ].map(([label, rate, down]) => {
+    const price = MortgageMath.solveAffordablePrice({ budget: aff.budget, down, term: aff.term, rate, taxRate: aff.taxRate, fixedAssess: aff.fixedAssess, insMo: aff.insMo, hoa: aff.hoa, pmiPct: aff.pmiPct });
+    const total = MortgageMath.affordabilityAtRate({ price, down, term: aff.term, rate, taxRate: aff.taxRate, fixedAssess: aff.fixedAssess, insMo: aff.insMo, hoa: aff.hoa, pmiPct: aff.pmiPct }).total;
+    return { label, rate, down, price, total };
+  });
+
+  const sens = [
+    ['Rate +0.5%', aff.baseRate + 0.5, aff.priceAtBase],
+    ['Rate -0.5%', aff.baseRate - 0.5, aff.priceAtBase],
+    ['Price +10%', aff.baseRate, aff.priceAtBase * 1.1],
+    ['Price -10%', aff.baseRate, aff.priceAtBase * 0.9]
+  ].map(([label, rate, price]) => {
+    const total = MortgageMath.affordabilityAtRate({ price, down: aff.down, term: aff.term, rate, taxRate: aff.taxRate, fixedAssess: aff.fixedAssess, insMo: aff.insMo, hoa: aff.hoa, pmiPct: aff.pmiPct }).total;
+    return { label, total, delta: total - aff.totalAtBase };
+  });
+
+  container.innerHTML = `
+    <div class="insight-grid">
+      <div class="card"><h3>Scenario compare</h3><table class="insight-table"><tr><th>Scenario</th><th>Rate</th><th>Max Price</th><th>Monthly</th></tr>${scenarios.map((s) => `<tr><td>${s.label}</td><td>${s.rate.toFixed(2)}%</td><td>${money(s.price)}</td><td>${money(s.total)}</td></tr>`).join('')}</table></div>
+      <div class="card"><h3>Sensitivity</h3><table class="insight-table"><tr><th>Change</th><th>Monthly</th><th>Δ vs Base</th></tr>${sens.map((s) => `<tr><td>${s.label}</td><td>${money(s.total)}</td><td>${money(s.delta)}</td></tr>`).join('')}</table></div>
+    </div>
+    <div class="insight-grid">
+      <div class="card"><h3>Risk metrics</h3><p>Payment/Income (DTI): <strong>${dti ? dti.toFixed(1) + '%' : 'Add monthly income below'}</strong></p><p>Cash reserves: <strong>${reservesMonths ? reservesMonths.toFixed(1) : '0.0'} months</strong></p><p>Stress-rate (base +1%) max price: <strong>${money(stressPrice)}</strong></p></div>
+      <div class="card"><h3>Break-even + 5-year view</h3><p>Points cost: <strong>${money(pointsCost)}</strong></p><p>Break-even: <strong>${Number.isFinite(breakEvenMonths) ? breakEvenMonths.toFixed(1) + ' months' : 'No monthly savings'}</strong></p><p>5-year interest paid: <strong>${money(int5y)}</strong></p><p>5-year principal+extra paid: <strong>${money(prin5y)}</strong></p><p>5-year carrying cost: <strong>${money(carry5y)}</strong></p></div>
+      <div class="card"><h3>Uncertainty range (rate ±0.5%)</h3><p>Best-case max price: <strong>${money(bestPrice)}</strong></p><p>Base max price: <strong>${money(aff.priceAtBase)}</strong></p><p>Worst-case max price: <strong>${money(worstPrice)}</strong></p></div>
+    </div>
+  `;
 }
 
 async function recalc() {
@@ -338,8 +449,9 @@ async function recalc() {
   const isValid = validateInputs();
   if (!isValid) return;
   await ensureVendorLibs();
-  affordabilityRun();
-  amortizationRun();
+  const affSummary = affordabilityRun();
+  const amortSummary = amortizationRun();
+  renderDecisionInsights(affSummary, amortSummary);
 }
 
 function wire() {

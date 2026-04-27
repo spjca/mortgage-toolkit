@@ -56,6 +56,15 @@
         </div>
       </fieldset>
 
+
+      <fieldset>
+        <legend>Decision Inputs</legend>
+        <label>Gross monthly income ($)</label>
+        <input type="number" id="monthlyIncome" value="0" step="100">
+        <label>Liquid cash reserves ($)</label>
+        <input type="number" id="liquidCash" value="0" step="1000">
+      </fieldset>
+
       <fieldset>
         <legend>Affordability Inputs</legend>
         <label>Max monthly budget ($)</label>
@@ -235,6 +244,10 @@
           <div class="card"><div id="affPayments"></div></div>
         </div>
       </section>
+
+
+      <h2 style="margin:10px 0 6px 0;font-size:16px;color:#cfe0ff;">Decision Insights</h2>
+      <section id="decisionInsights" aria-live="polite"></section>
 
       <h2 style="margin:10px 0 6px 0;font-size:16px;color:#cfe0ff;">Amortization</h2>
       <section id="amortSection">

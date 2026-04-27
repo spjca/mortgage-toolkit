@@ -138,6 +138,8 @@
     const num = (v) => Number(v);
     const nonNegative = [
       ['maxMonthly', 'Max monthly budget'],
+      ['monthlyIncome', 'Monthly income'],
+      ['liquidCash', 'Liquid cash reserves'],
       ['down', 'Down payment'],
       ['term', 'Term'],
       ['baseRate', 'Base rate'],
