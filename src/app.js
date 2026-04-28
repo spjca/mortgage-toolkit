@@ -9,15 +9,46 @@ const APP_BASE = (() => {
   return appScript.src.replace(/src\/app\.js(?:\?.*)?$/, '');
 })();
 
-function loadScript(src) {
-  return new Promise((resolve, reject) => {
-    const s = document.createElement('script');
-    s.src = new URL(src, APP_BASE).href;
-    s.async = false;
-    s.onload = resolve;
-    s.onerror = () => reject(new Error(`Failed to load ${src}`));
-    document.head.appendChild(s);
-  });
+const APP_BASE_CANDIDATES = (() => {
+  const parts = window.location.pathname.split('/').filter(Boolean);
+  const repoBase = parts.length ? `${window.location.origin}/${parts[0]}/` : `${window.location.origin}/`;
+  return [...new Set([
+    APP_BASE,
+    repoBase,
+    new URL('./', window.location.href).href
+  ])];
+})();
+
+async function loadScript(src) {
+  let lastErr = null;
+
+  for (const base of APP_BASE_CANDIDATES) {
+    const scriptUrl = new URL(src, base).href;
+    try {
+      const res = await fetch(scriptUrl, { credentials: 'same-origin' });
+      if (!res.ok) {
+        lastErr = new Error(`HTTP ${res.status} for ${scriptUrl}`);
+        continue;
+      }
+
+      const body = await res.text();
+      const trimmed = body.trimStart().toLowerCase();
+      if (trimmed.startsWith('<!doctype') || trimmed.startsWith('<html') || trimmed.startsWith('<')) {
+        lastErr = new Error(`Non-JS response for ${scriptUrl}`);
+        continue;
+      }
+
+      const script = document.createElement('script');
+      script.textContent = `${body}
+//# sourceURL=${scriptUrl}`;
+      document.head.appendChild(script);
+      return;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+
+  throw new Error(`Failed to load ${src} from bases: ${APP_BASE_CANDIDATES.join(', ')}${lastErr ? ` (${lastErr.message})` : ''}`);
 }
 
 function ensureVendorLibs() {
